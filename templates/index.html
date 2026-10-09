@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MultiDocChat — Chat with your documents</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="bg" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <main class="app">
+    <!-- ============ Sidebar: upload ============ -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>
+        </div>
+        <div>
+          <h1>MultiDocChat</h1>
+          <p>Ask questions across your files</p>
+        </div>
+      </div>
+
+      <label class="dropzone" id="dropzone" tabindex="0">
+        <input type="file" id="fileInput" multiple accept=".pdf,.docx,.txt" />
+        <div class="dz-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>
+        </div>
+        <strong>Drop files here</strong>
+        <small>or click to browse · PDF, DOCX, TXT</small>
+      </label>
+
+      <ul class="files" id="fileList"></ul>
+
+      <button class="btn" id="uploadBtn" disabled>Index documents</button>
+      <button class="btn ghost" id="resetBtn" hidden>Start over</button>
+
+      <div class="status" id="status">
+        <span class="dot"></span><span id="statusText">Waiting for documents</span>
+      </div>
+    </aside>
+
+    <!-- ============ Chat ============ -->
+    <section class="chat">
+      <header class="chat-head">
+        <h2>Conversation</h2>
+        <span id="sessionLabel">No session</span>
+      </header>
+
+      <div class="messages" id="messages">
+        <div class="empty" id="empty">
+          <div class="orb"></div>
+          <h3>Your documents, answered.</h3>
+          <p>Upload one or more files and index them. Then ask anything about their contents.</p>
+        </div>
+      </div>
+
+      <div class="composer">
+        <form id="chatForm">
+          <textarea id="input" rows="1" placeholder="Index documents to start chatting…" disabled></textarea>
+          <button class="send" id="sendBtn" type="submit" disabled aria-label="Send message">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>
+          </button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const dropzone = $("dropzone"), fileInput = $("fileInput"), fileList = $("fileList");
+    const uploadBtn = $("uploadBtn"), resetBtn = $("resetBtn");
+    const statusEl = $("status"), statusText = $("statusText"), sessionLabel = $("sessionLabel");
+    const messages = $("messages"), input = $("input"), sendBtn = $("sendBtn"), chatForm = $("chatForm");
+
+    let selected = [];
+    let sessionId = null;
+    let sending = false;
+
+    /* ---------- helpers ---------- */
+    function toast(text, type = "ok") {
+      const t = $("toast");
+      t.textContent = text;
+      t.className = "toast show " + type;
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => (t.className = "toast"), 3200);
+    }
+    function setStatus(state, text) {
+      statusEl.className = "status " + state;
+      statusText.textContent = text;
+    }
+    function fmtSize(b) {
+      return b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB";
+    }
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+    function render(text) {
+      return escapeHtml(text)
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>");
+    }
+
+    /* ---------- file selection ---------- */
+    function renderFiles() {
+      fileList.innerHTML = "";
+      selected.forEach((f, i) => {
+        const li = document.createElement("li");
+        li.style.animationDelay = i * 60 + "ms";
+        const ext = (f.name.split(".").pop() || "file").toUpperCase();
+        li.innerHTML = `<span class="ext">${escapeHtml(ext)}</span>
+          <span class="name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+          <span class="size">${fmtSize(f.size)}</span>
+          <button class="rm" aria-label="Remove ${escapeHtml(f.name)}">×</button>`;
+        li.querySelector(".rm").onclick = () => { selected.splice(i, 1); renderFiles(); };
+        fileList.appendChild(li);
+      });
+      uploadBtn.disabled = selected.length === 0;
+    }
+    function addFiles(list) {
+      for (const f of list) {
+        if (!selected.some((s) => s.name === f.name && s.size === f.size)) selected.push(f);
+      }
+      renderFiles();
+    }
+
+    fileInput.addEventListener("change", () => { addFiles(fileInput.files); fileInput.value = ""; });
+    ["dragenter", "dragover"].forEach((e) =>
+      dropzone.addEventListener(e, (ev) => { ev.preventDefault(); dropzone.classList.add("drag"); }));
+    ["dragleave", "drop"].forEach((e) =>
+      dropzone.addEventListener(e, (ev) => { ev.preventDefault(); dropzone.classList.remove("drag"); }));
+    dropzone.addEventListener("drop", (ev) => addFiles(ev.dataTransfer.files));
+    dropzone.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } });
+
+    /* ---------- upload ---------- */
+    uploadBtn.addEventListener("click", async () => {
+      if (!selected.length) return;
+      const fd = new FormData();
+      selected.forEach((f) => fd.append("files", f));
+
+      uploadBtn.disabled = true;
+      uploadBtn.classList.add("loading");
+      uploadBtn.textContent = "Indexing…";
+      setStatus("busy", "Reading and embedding your documents");
+
+      try {
+        const res = await fetch("/upload", { method: "POST", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Upload failed");
+
+        sessionId = data.session_id;
+        sessionLabel.textContent = "Session " + sessionId.slice(0, 8);
+        setStatus("ready", "Ready — ask away");
+        toast(data.message || "Indexing complete");
+
+        messages.innerHTML = "";
+        addMessage("bot", `I've indexed ${selected.length} document${selected.length > 1 ? "s" : ""}. What would you like to know?`);
+
+        input.disabled = false;
+        sendBtn.disabled = false;
+        input.placeholder = "Ask a question about your documents…";
+        input.focus();
+        resetBtn.hidden = false;
+        uploadBtn.textContent = "Index again";
+        uploadBtn.disabled = false;
+      } catch (err) {
+        setStatus("", "Indexing failed");
+        toast(err.message, "err");
+        uploadBtn.textContent = "Index documents";
+        uploadBtn.disabled = false;
+      } finally {
+        uploadBtn.classList.remove("loading");
+      }
+    });
+
+    resetBtn.addEventListener("click", () => {
+      selected = []; sessionId = null; renderFiles();
+      messages.innerHTML = `<div class="empty"><div class="orb"></div><h3>Your documents, answered.</h3><p>Upload one or more files and index them. Then ask anything about their contents.</p></div>`;
+      input.disabled = true; sendBtn.disabled = true;
+      input.placeholder = "Index documents to start chatting…";
+      sessionLabel.textContent = "No session";
+      uploadBtn.textContent = "Index documents";
+      resetBtn.hidden = true;
+      setStatus("", "Waiting for documents");
+    });
+
+    /* ---------- chat ---------- */
+    function addMessage(role, text, extra = "") {
+      const el = document.createElement("div");
+      el.className = `msg ${role} ${extra}`;
+      el.innerHTML = render(text);
+      messages.appendChild(el);
+      messages.scrollTop = messages.scrollHeight;
+      return el;
+    }
+    function showTyping() {
+      const el = document.createElement("div");
+      el.className = "msg bot typing";
+      el.innerHTML = "<i></i><i></i><i></i>";
+      messages.appendChild(el);
+      messages.scrollTop = messages.scrollHeight;
+      return el;
+    }
+
+    async function sendMessage() {
+      const text = input.value.trim();
+      if (!text || sending || !sessionId) return;
+
+      sending = true;
+      sendBtn.disabled = true;
+      addMessage("user", text);
+      input.value = "";
+      input.style.height = "auto";
+      const typing = showTyping();
+
+      try {
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, message: text }),
+        });
+        const data = await res.json();
+        typing.remove();
+        if (!res.ok) throw new Error(data.detail || "Chat failed");
+        addMessage("bot", data.answer);
+      } catch (err) {
+        typing.remove();
+        addMessage("bot", err.message, "error");
+      } finally {
+        sending = false;
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    }
+
+    chatForm.addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+    input.addEventListener("input", () => {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 140) + "px";
+    });
+  </script>
+</body>
+</html>

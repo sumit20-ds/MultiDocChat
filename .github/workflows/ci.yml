@@ -1,0 +1,35 @@
+name: CI
+
+on:      #evnets that trigger the workflow 
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:     #what jobs to run in the workflow
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 
+        uses: actions/checkout@v4      #checkout the code from the repository
+
+      - name: Set up Python
+        uses: actions/setup-python@v5    #set up the Python environment
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4       #set up the uv environment
+
+      - name: Sync dependencies with uv (locked)
+        run: |
+          uv sync --frozen
+          uv pip install pytest
+      - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/multi_doc_chat       #set the PYTHONPATH environment variable to the multi_doc_chat directory in the GitHub workspace
+          GROQ_API_KEY: dummy
+          GOOGLE_API_KEY: dummy
+          LLM_PROVIDER: google
+        run: |
+          uv run pytest -q
