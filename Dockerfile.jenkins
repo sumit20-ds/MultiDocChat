@@ -1,0 +1,40 @@
+FROM jenkins/jenkins:lts
+
+USER root
+
+# Install Python 3 and dependencies
+RUN apt-get update && \
+    apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    git \
+    curl \
+    ca-certificates \
+    lsb-release \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Azure CLI 
+ #comment: The Azure CLI is a command-line tool that allows you to manage Azure resources and services. It provides a set of commands that can be used to create, configure, and manage Azure resources from the command line. The Azure CLI can be installed on various operating systems, including Windows, macOS, and Linux. In this Dockerfile, the Azure CLI is being installed in a Jenkins container to enable Jenkins to interact with Azure resources during the build and deployment process.
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
+# Install Docker CLI (for building images in Jenkins)
+RUN apt-get update && \
+    apt-get install -y docker.io && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create symbolic link for python command 
+#comment: This command creates a symbolic link from /usr/bin/python3 to /usr/bin/python. This allows you to use the command python to run Python 3, instead of having to use the command python3. This is useful because some scripts and applications may expect the command python to refer to Python 3, rather than Python 2.
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# Pre-install essential Jenkins plugins for this pipeline 
+#comment: This command installs essential Jenkins plugins for the pipeline. The jenkins-plugin-cli is a command-line tool that allows you to manage Jenkins plugins from the command line. The --plugins option specifies the list of plugins to install, which includes git, workflow-aggregator, junit, and github-branch-source. These plugins are commonly used in Jenkins pipelines for source code management, build automation, and testing. By pre-installing these plugins in the Docker image, you can ensure that they are available for use in your Jenkins pipeline without having to install them manually.
+RUN jenkins-plugin-cli --plugins "git workflow-aggregator junit github-branch-source"
+
+# Configure git to allow all directories (fixes dubious ownership errors in Jenkins)
+#comment: This command configures Git to allow all directories as safe directories. This is necessary because Jenkins runs builds in a sandboxed environment, which can cause Git to report dubious ownership errors when trying to access certain directories. By adding the safe.directory configuration, Git will allow access to all directories without reporting ownership errors. The --system option specifies that this configuration should be applied system-wide, rather than just for the current user.
+RUN git config --system --add safe.directory '*'
+
+# Switch back to jenkins user
+USER jenkins
