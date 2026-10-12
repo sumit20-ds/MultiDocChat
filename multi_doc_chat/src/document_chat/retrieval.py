@@ -16,6 +16,7 @@ from multi_doc_chat.model.models import PromptType, ChatAnswer
 from pydantic import ValidationError
 
 
+
 class ConversationalRAG:
     """
     LCEL-based Conversational RAG with lazy retriever initialization.

@@ -14,6 +14,7 @@ from multi_doc_chat.src.document_ingestion.data_ingestion import ChatIngestor
 from multi_doc_chat.src.document_chat.retrieval import ConversationalRAG
 from langchain_core.messages import HumanMessage, AIMessage
 from multi_doc_chat.exception.custom_exception import DocumentPortalException
+from multi_doc_chat.utils.guardrails import check_user_input, mask_sensitive, rate_limiter, sanitize_output
 
 
 # ----------------------------
@@ -128,6 +129,14 @@ async def chat(req: ChatRequest) -> ChatResponse:
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    ok, msg = check_user_input(message)
+    if not ok:
+       return ChatResponse(answer=msg)          # refusal is not saved in history
+    allowed, wait = rate_limiter.allow(session_id)
+    if not allowed:
+       raise HTTPException(status_code=429, detail=f"Too many requests. Please wait {wait} seconds.")
+    message = mask_sensitive(message)            # masked before history and the LLM
+
     try:
         # Build RAG and load retriever from persisted FAISS with MMR
         rag = ConversationalRAG(session_id=session_id)
@@ -150,7 +159,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
             elif role == "assistant":
                 lc_history.append(AIMessage(content=content))
 
-        answer = rag.invoke(message, chat_history=lc_history)
+        #answer = rag.invoke(message, chat_history=lc_history)
+        answer = sanitize_output(rag.invoke(message, chat_history=lc_history))
 
         # Update history
         simple.append({"role": "user", "content": message})
