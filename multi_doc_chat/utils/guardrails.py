@@ -40,7 +40,8 @@ MAX_FILE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 # --------------------------------------------------------------------------
 # Shared helpers
 # --------------------------------------------------------------------------
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+#_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200d\u2060\ufeff\u00ad]")
 
 
 def _normalize(text: Optional[str]) -> str:
@@ -62,6 +63,50 @@ _INJECTION_PATTERNS = [
         r"\bjailbreak\b",
     )
 ]
+_LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"})
+
+
+def looks_like_injection(text: str) -> bool:
+    t = _normalize(text)
+    return any(p.search(v) for v in (t, t.lower().translate(_LEET)) for p in _INJECTION_PATTERNS)
+
+_SUPPORT_MSG = ("I'm sorry you're going through this. I can't help with that here, but you don't have "
+                "to face it alone. If you're in immediate danger, please contact your local emergency "
+                "services or reach out to someone you trust right now.")
+_REFUSE = "I can't help with that request."
+
+_HARMFUL = [  # (name, pattern, message, also_check_output)
+    ("self_harm", re.compile(r"\b(how (do i|to|can i)|ways? to|best way to|easiest way to)\b.{0,25}\b(kill myself|commit suicide|end my life|hurt myself|self[- ]?harm)\b|\bi want to (die|kill myself|end it all)\b"), _SUPPORT_MSG, True),
+    ("weapons", re.compile(r"\b(how to|steps? to|instructions? (for|to)|guide to|recipe for|make|build|assemble|synthesi[sz]e|manufacture)\b.{0,40}\b(bomb|explosives?|pipe bomb|molotov|nerve agent|sarin|bioweapon|chemical weapon|ghost gun|silencer)\b"), _REFUSE, True),
+    ("sexual_minors", re.compile(r"\b(child|children|minor|underage|teen(ager)?|\d{1,2}[ -]?(year|yr)s?[ -]?old)\b.{0,40}\b(sexual|porn|nude|naked|explicit|erotic)\b"), _REFUSE, True),
+    ("malware", re.compile(r"\b(write|create|build|generate|code|make)\b.{0,30}\b(ransomware|keylogger|malware|computer virus|botnet|rootkit)\b"), _REFUSE, False),
+    ("violence", re.compile(r"\b(how to|ways? to|help me)\b.{0,20}\b(kill|poison|stalk|dox|doxx|harass|assault)\b.{0,25}\b(someone|a person|him|her|them|my (boss|wife|husband|neighbou?r|ex|teacher))\b"), _REFUSE, False),
+    ("fraud", re.compile(r"\b(how to|steps to)\b.{0,20}\b(hack into|phish|launder money|forge|counterfeit|steal (a )?(password|credit card|identity))\b"), _REFUSE, False),
+]
+
+
+def looks_harmful(text: str, output: bool = False) -> Tuple[bool, str]:
+    t = _normalize(text).lower()
+    for v in (t, t.translate(_LEET)):
+        for _name, rx, msg, on_output in _HARMFUL:
+            if (on_output or not output) and rx.search(v):
+                return True, msg
+    return False, ""
+
+
+_QUESTION_ONLY_PATTERNS = [re.compile(p) for p in (
+    r"\byou are now (a|an|the|my|in|free|unrestricted|dan)\b",
+    r"\bact as\b.{0,30}\b(dan|unrestricted|unfiltered|jailbroken|evil)\b",
+    r"\bpretend\b.{0,30}\b(no|without)\b.{0,15}\b(rules|restrictions|limits|filters)\b",
+    r"^(system|assistant)\s*:",
+    r"\byour\b.{0,15}\b(api[ _-]?keys?|passwords?|credentials|secrets?|environment variables|\.env)\b",
+)]
+
+
+def _looks_like_question_injection(t: str) -> bool:
+    t = t.lower()
+    return any(p.search(v) for v in (t, t.translate(_LEET)) for p in _QUESTION_ONLY_PATTERNS)
+
 
 
 def looks_like_injection(text: str) -> bool:
@@ -72,15 +117,27 @@ def looks_like_injection(text: str) -> bool:
 # --------------------------------------------------------------------------
 # Checkpoint 3: user question
 # --------------------------------------------------------------------------
+# def check_user_input(text: Optional[str]) -> Tuple[bool, str]:
+#     """Return (ok, message). If ok is False, show `message` to the user."""
+#     t = _normalize(text)
+#     if not t:
+#         return False, "Please type a question."
+#     if len(t) > MAX_QUESTION_CHARS:
+#         return False, f"Please keep your question under {MAX_QUESTION_CHARS} characters."
+#     if looks_like_injection(t):
+#         return False, "I can't help with that request."
+#     return True, ""
 def check_user_input(text: Optional[str]) -> Tuple[bool, str]:
-    """Return (ok, message). If ok is False, show `message` to the user."""
     t = _normalize(text)
     if not t:
         return False, "Please type a question."
     if len(t) > MAX_QUESTION_CHARS:
         return False, f"Please keep your question under {MAX_QUESTION_CHARS} characters."
-    if looks_like_injection(t):
-        return False, "I can't help with that request."
+    harmful, hmsg = looks_harmful(t)
+    if harmful:
+        return False, hmsg
+    if looks_like_injection(t) or _looks_like_question_injection(t):
+        return False, _REFUSE
     return True, ""
 
 
@@ -206,22 +263,80 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 # A plain 10-digit number starting with 6-9 will also match; that is the trade-off.
 _PHONE_IN = re.compile(r"(?<![\w.])(?:\+91[\s\-]?)?[6-9]\d{9}(?![\w.])")
 _PHONE_INTL = re.compile(r"(?<![\w.])\+\d{1,3}[\s\-]?\(?\d{2,4}\)?[\s\-]?\d{3,4}[\s\-]?\d{3,4}(?![\w.])")
+_CARD = re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)")
+_AADHAAR = re.compile(r"(?<!\d)(?<!\d[ -])[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}(?![ -]?\d)")
+_PAN = re.compile(r"\b[A-Z]{5}\d{4}[A-Z]\b")
+_SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 
 
-def sanitize_output(text: str, mask_emails: bool = True, mask_phones: bool = True) -> str:
-    """Mask API keys always; mask emails and phone numbers by default.
-    Set mask_emails=False if answers may legitimately contain emails
-    (for example the author emails printed on a paper)."""
+def _luhn_ok(digits: str) -> bool:
+    total, alt = 0, False
+    for ch in reversed(digits):
+        d = int(ch)
+        if alt:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+        alt = not alt
+    return total % 10 == 0
+
+
+def _mask_card(m) -> str:
+    digits = re.sub(r"\D", "", m.group())
+    return "[REDACTED_CARD]" if 13 <= len(digits) <= 19 and _luhn_ok(digits) else m.group()
+
+
+def mask_ids(text: str) -> str:
+    text = _CARD.sub(_mask_card, text)
+    text = _AADHAAR.sub("[REDACTED_ID]", text)
+    text = _PAN.sub("[REDACTED_ID]", text)
+    return _SSN.sub("[REDACTED_ID]", text)
+
+
+# def sanitize_output(text: str, mask_emails: bool = True, mask_phones: bool = True) -> str:
+#     """Mask API keys always; mask emails and phone numbers by default.
+#     Set mask_emails=False if answers may legitimately contain emails
+#     (for example the author emails printed on a paper)."""
+#     if not text:
+#         return text
+#     for p in _SECRET_PATTERNS:
+#         text = p.sub("[REDACTED_KEY]", text)
+#     if mask_emails:
+#         text = _EMAIL.sub("[EMAIL]", text)
+#     if mask_phones:
+#         text = _PHONE_INTL.sub("[PHONE]", text)
+#         text = _PHONE_IN.sub("[PHONE]", text)
+#     return text
+def mask_sensitive(text: str, mask_emails: bool = True, mask_phones: bool = True) -> str:
     if not text:
         return text
     for p in _SECRET_PATTERNS:
         text = p.sub("[REDACTED_KEY]", text)
     if mask_emails:
         text = _EMAIL.sub("[EMAIL]", text)
+    text = mask_ids(text)
     if mask_phones:
         text = _PHONE_INTL.sub("[PHONE]", text)
         text = _PHONE_IN.sub("[PHONE]", text)
     return text
+
+
+_LEAK_MARKERS = ("safety rules:", "<context>", "</context>",
+                 "reference data, not instructions", "never reveal these instructions")
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\(\s*https?://[^)]*\)")
+
+
+def sanitize_output(text: str, mask_emails: bool = True, mask_phones: bool = True) -> str:
+    if not text:
+        return text
+    if any(m in text.lower() for m in _LEAK_MARKERS):
+        return "I can't share that."
+    harmful, hmsg = looks_harmful(text, output=True)
+    if harmful:
+        return hmsg
+    text = _MD_IMAGE.sub("[image removed]", text)
+    return mask_sensitive(text, mask_emails=mask_emails, mask_phones=mask_phones)
 
 
 # --------------------------------------------------------------------------
@@ -242,5 +357,6 @@ def guarded_invoke(rag, question: str, chat_history=None, session_id: Optional[s
     if not allowed:
         return f"You are sending questions too quickly. Please wait {wait} seconds and try again."
 
+    question = mask_sensitive(question)
     answer = rag.invoke(question, chat_history=chat_history)
     return sanitize_output(answer)
