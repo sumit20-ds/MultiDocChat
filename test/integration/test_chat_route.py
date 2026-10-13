@@ -46,4 +46,4 @@ def test_chat_failure_returns_500(client, clear_sessions, monkeypatch):
     monkeypatch.setattr(main, "ConversationalRAG", BoomRAG)
     resp = client.post("/chat", json={"session_id": sid, "message": "hi"})
     assert resp.status_code == 500
-    assert "fail load" in resp.json()["detail"].lower()
+    assert "went wrong" in resp.json()["detail"].lower()

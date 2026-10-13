@@ -4,7 +4,7 @@
     "executionRoleArn": "arn:aws:iam::111542052914:role/ecsTaskExecutionRole",
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "1024",
-    "memory": "8192",
+    "memory": "2048",
     "containerDefinitions": [
       {
         "name": "llmops-live-container",
@@ -24,6 +24,10 @@
           {
             "name": "ENV",
             "value": "production"
+          },
+          {
+            "name": "LLM_PROVIDER",
+            "value": "groq"
           }
         ],
         "secrets": [
