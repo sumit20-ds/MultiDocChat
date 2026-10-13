@@ -168,10 +168,15 @@ async def chat(req: ChatRequest) -> ChatResponse:
         SESSIONS[session_id] = simple
 
         return ChatResponse(answer=answer)
+    # except DocumentPortalException as e:
+    #     raise HTTPException(status_code=500, detail=str(e))
+    # except Exception as e:
+    #     raise HTTPException(status_code=500, detail=f"Chat failed: {e}")
     except DocumentPortalException as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat failed: {e}")
+        msg = str(e).lower()
+    if "resource_exhausted" in msg or "quota" in msg or "rate" in msg:
+        raise HTTPException(status_code=429, detail="The AI service is busy. Please try again in a minute.")
+    raise HTTPException(status_code=500, detail="Something went wrong while answering. Please try again.")
 
 
 # Uvicorn entrypoint for `python main.py` (optional)

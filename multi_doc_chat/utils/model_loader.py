@@ -113,7 +113,8 @@ class ModelLoader:
                 model=model_name,
                 google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),
                 temperature=temperature,
-                max_output_tokens=max_tokens
+                max_output_tokens=max_tokens,
+                max_retries=1
             )
 
         elif provider == "groq":
@@ -121,6 +122,8 @@ class ModelLoader:
                 model=model_name,
                 api_key=self.api_key_mgr.get("GROQ_API_KEY"), #type: ignore
                 temperature=temperature,
+                max_tokens=max_tokens,
+                max_retries=1,
             )
 
         # elif provider == "openai":
